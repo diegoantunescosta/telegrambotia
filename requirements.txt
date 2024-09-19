@@ -4,4 +4,4 @@ openai
 wraps
 load_dotenv
 Flask-Cors
-
+python-telegram-bot==13.15
