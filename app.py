@@ -1,17 +1,19 @@
-import os
-import requests
-from flask import Flask, request, jsonify
-from functools import wraps
-from openai import OpenAI
-from dotenv import load_dotenv
-from flask_cors import CORS
-from datetime import datetime, timedelta
-import calendar
 
+import os  
+from flask import Flask, request, jsonify 
+from functools import wraps 
+from openai import OpenAI 
+from dotenv import load_dotenv  
+from flask_cors import CORS  
+from telegram import Update, Bot 
+from telegram.ext import CommandHandler, MessageHandler, Filters, Updater, CallbackContext  
 app = Flask(__name__)
 CORS(app)
 
 load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  
+bot = Bot(token=TELEGRAM_TOKEN)
 
 def require_token_auth(func):
     @wraps(func)
@@ -35,54 +37,15 @@ client = OpenAI(
     api_key=api_key,
 )
 
-# Initialize system_prompt as a global variable
-system_prompt = "Você é uma assistente da granja."
+system_prompt = "Você é uma assistente Geral"
 
-def fetch_and_update_data():
-    global system_prompt  # Ensure system_prompt is global within this function
-    last_business_day = get_last_business_day()
-    try:
-        # Fetch data from APIs
-        cotacao_response = requests.get(f'http://213.199.37.135:5000/api/egg-prices?date={last_business_day}')
-        online_response = requests.get('http://213.199.37.135:5000/api/eggs_online')
-        additional_data_response = requests.get('http://213.199.37.135:5000/getData')
-        
-        if (cotacao_response.status_code == 200 and
-            online_response.status_code == 200 and
-            additional_data_response.status_code == 200):
-            cotacao_data = cotacao_response.json()
-            online_data = online_response.json()
-            additional_data = additional_data_response.json()
-            
-            # Update the system prompt with the new data
-            system_prompt = (
-                f"Você é uma assistente geral. Dados de cotação: {cotacao_data}, "
-                f"Dados online: {online_data}, Dados adicionais: {additional_data}"
-            )
-        else:
-            print("Erro ao obter dados das APIs")
-
-    except Exception as e:
-        print(f"Erro ao atualizar dados: {e}")
-
-def get_last_business_day():
-    now = datetime.now()
-    last_business_day = now - timedelta(days=1)
-    while last_business_day.weekday() in [calendar.SATURDAY, calendar.SUNDAY]:
-        last_business_day -= timedelta(days=1)
-
-    return last_business_day.strftime('%Y-%m-%d')
-
-# Rota protegida com autenticação Bearer Token
-@app.route('/analyze', methods=['POST'])
-@require_token_auth
-def analyze():
-    data = request.json
-    user_content = data.get("content")
+def handle_message(update: Update, context: CallbackContext):
+    user_message = update.message.text
+    response = get_chatbot_response(user_message)
     
-    if not user_content:
-        return jsonify({"error": "Content is required"}), 400
+    update.message.reply_text(response)
 
+def get_chatbot_response(user_content):
     try:
         completion = client.chat.completions.create(
             model="meta-llama/llama-3-8b-instruct:free",
@@ -93,18 +56,26 @@ def analyze():
         )
 
         response_content = completion.choices[0].message.content
-        response_json = {
-            "response": response_content
-        }
-        
-        return jsonify(response_json)
+        return response_content
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return f"Erro ao gerar resposta: {e}"
+
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Olá! Eu sou o assistente Geral. Como posso ajudar?")
+
+def setup_telegram_bot():
+    updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+
+    dispatcher.add_handler(CommandHandler("start", start))
+
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
-    # Perform the initial data update
-    # fetch_and_update_data()
+    setup_telegram_bot()
 
-    # Start the Flask app
     app.run(debug=True, host="0.0.0.0", port=5000)
